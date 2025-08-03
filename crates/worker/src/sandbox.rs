@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::ffi::OsStr;
 use std::path::PathBuf;
 use std::sync::Mutex;
 
@@ -42,14 +43,19 @@ pub struct Sandbox {
 	files: Mutex<HashMap<FileId, FileEntry>>,
 }
 
-fn fonts() -> Vec<Font> {
+fn fonts(directory: Option<&OsStr>) -> Vec<Font> {
+	let system_fonts = directory
+		.into_iter()
+		.flat_map(|dir| std::fs::read_dir(dir).expect("failed to read font directory"))
+		.flatten()
+		.map(|entry| std::fs::read(entry.path()).expect("failed to read font"))
+		.map(Bytes::new);
 	typst_assets::fonts()
-		.flat_map(|bytes| {
-			let buffer = Bytes::new(bytes);
+		.map(Bytes::new)
+		.chain(system_fonts)
+		.flat_map(|buffer| {
 			let face_count = ttf_parser::fonts_in_collection(&buffer).unwrap_or(1);
-			(0..face_count).map(move |face| {
-				Font::new(buffer.clone(), face).expect("failed to load font from typst-assets")
-			})
+			(0..face_count).map(move |face| Font::new(buffer.clone(), face).expect("failed to load font"))
 		})
 		.collect()
 }
@@ -78,7 +84,7 @@ pub struct WithSource<'a> {
 
 impl Sandbox {
 	pub fn new() -> Self {
-		let fonts = fonts();
+		let fonts = fonts(std::env::var_os("FONT_DIRECTORY").as_deref());
 
 		Self {
 			library: LazyHash::new(Library::default()),
